@@ -6,7 +6,7 @@ var data = [
 	[1,2,3],
 	[true, false, null, "sheetjs"],
 	["foo","bar",new Date("2014-02-19T14:30Z"), "0.3"],
-	["baz", null, "qux"]
+	["baz", null, "qux", 3.14159]
 ];
 
 var ws_name = "SheetJS";
@@ -85,3 +85,7 @@ ws['!cols'] = wscols;
 
 /* write file */
 XLSX.writeFile(wb, 'sheetjs.xlsx');
+XLSX.writeFile(wb, 'sheetjs.xlsm');
+XLSX.writeFile(wb, 'sheetjs.xlsb');
+XLSX.writeFile(wb, 'sheetjs.xls', {bookType:'biff2'});
+XLSX.writeFile(wb, 'sheetjs.ods');

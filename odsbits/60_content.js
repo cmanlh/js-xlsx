@@ -14,29 +14,31 @@ var parse_content_xml = (function() {
 
 	return function pcx(d, opts) {
 		var str = xlml_normalize(d);
-		var state = [], tmp;
-		var tag;
-		var NFtag, NF, pidx;
-		var sheetag;
-		var Sheets = {}, SheetNames = [], ws = {};
-		var Rn, q;
-		var ctag;
-		var textp, textpidx, textptag;
-		var R, C, range = {s: {r:1000000,c:10000000}, e: {r:0, c:0}};
+		var state/*:Array<any>*/ = [], tmp;
+		var tag/*:: = {}*/;
+		var NFtag = {name:""}, NF = "", pidx = 0;
+		var sheetag/*:: = {name:""}*/;
+		var Sheets = {}, SheetNames/*:Array<string>*/ = [], ws = {};
+		var Rn, q/*:: = {t:"", v:null, z:null, w:""}*/;
+		var ctag = {value:""};
+		var textp = "", textpidx = 0, textptag/*:: = {}*/;
+		var R = -1, C = -1, range = {s: {r:1000000,c:10000000}, e: {r:0, c:0}};
 		var number_format_map = {};
 		var merges = [], mrange = {}, mR = 0, mC = 0;
-
+		var rept = 1;
+		xlmlregex.lastIndex = 0;
 		while((Rn = xlmlregex.exec(str))) switch(Rn[3]) {
 
 			case 'table': // 9.1.2 <table:table>
 				if(Rn[1]==='/') {
 					if(range.e.c >= range.s.c && range.e.r >= range.s.r) ws['!ref'] = get_utils().encode_range(range);
 					if(merges.length) ws['!merges'] = merges;
+					sheetag.name = utf8read(sheetag.name);
 					SheetNames.push(sheetag.name);
 					Sheets[sheetag.name] = ws;
 				}
 				else if(Rn[0].charAt(Rn[0].length-2) !== '/') {
-					sheetag = parsexmltag(Rn[0]);
+					sheetag = parsexmltag(Rn[0], false);
 					R = C = -1;
 					range.s.r = range.s.c = 10000000; range.e.r = range.e.c = 0;
 					ws = {}; merges = [];
@@ -50,24 +52,29 @@ var parse_content_xml = (function() {
 				++C; break; /* stub */
 			case 'table-cell':
 				if(Rn[0].charAt(Rn[0].length-2) === '/') {
-					ctag = parsexmltag(Rn[0]);
+					ctag = parsexmltag(Rn[0], false);
 					if(ctag['number-columns-repeated']) C+= parseInt(ctag['number-columns-repeated'], 10);
 					else ++C;
 				}
 				else if(Rn[1]!=='/') {
 					++C;
+					rept = 1;
 					if(C > range.e.c) range.e.c = C;
 					if(R > range.e.r) range.e.r = R;
 					if(C < range.s.c) range.s.c = C;
 					if(R < range.s.r) range.s.r = R;
-					ctag = parsexmltag(Rn[0]);
-					q = {t:ctag['value-type'], v:null};
+					ctag = parsexmltag(Rn[0], false);
+					q = {t:ctag['value-type'], v:null/*:: , z:null, w:""*/};
 					if(ctag['number-columns-spanned'] || ctag['number-rows-spanned']) {
 						mR = parseInt(ctag['number-rows-spanned'],10) || 0;
 						mC = parseInt(ctag['number-columns-spanned'],10) || 0;
 						mrange = {s: {r:R,c:C}, e:{r:R + mR-1,c:C + mC-1}};
 						merges.push(mrange);
 					}
+
+					/* 19.675.2 table:number-columns-repeated */
+					if(ctag['number-columns-repeated']) rept = parseInt(ctag['number-columns-repeated'], 10);
+
 					/* 19.385 office:value-type */
 					switch(q.t) {
 						case 'boolean': q.t = 'b'; q.v = parsexmlbool(ctag['boolean-value']); break;
@@ -76,14 +83,22 @@ var parse_content_xml = (function() {
 						case 'currency': q.t = 'n'; q.v = parseFloat(ctag.value); break;
 						case 'date': q.t = 'n'; q.v = datenum(ctag['date-value']); q.z = 'm/d/yy'; break;
 						case 'time': q.t = 'n'; q.v = parse_isodur(ctag['time-value'])/86400; break;
-						case 'string': q.t = 's'; break;
-						default: throw new Error('Unsupported value type ' + q.t);
+						default:
+							if(q.t === 'string' || !q.t) {
+								q.t = 's';
+								if(ctag['string-value'] != null) textp = ctag['string-value'];
+							} else throw new Error('Unsupported value type ' + q.t);
 					}
 				} else {
-					if(q.t === 's') q.v = textp;
+					if(q.t === 's') q.v = textp || '';
 					if(textp) q.w = textp;
-					if(!(opts.sheetRows && opts.sheetRows < R)) ws[get_utils().encode_cell({r:R,c:C})] = q;
-					q = null;
+					if(!(opts.sheetRows && opts.sheetRows < R)) {
+						ws[get_utils().encode_cell({r:R,c:C})] = q;
+						while(--rept > 0) ws[get_utils().encode_cell({r:R,c:++C})] = dup(q);
+						if(range.e.c <= C) range.e.c = C;
+					}
+					q = {/*:: t:"", v:null, z:null, w:""*/};
+					textp = "";
 				}
 				break; // 9.1.4 <table:table-cell>
 
@@ -99,6 +114,13 @@ var parse_content_xml = (function() {
 			/* ignore state */
 			case 'shapes': // 9.2.8 <table:shapes>
 			case 'frame': // 10.4.2 <draw:frame>
+			case 'text-box': // 10.4.3 <draw:text-box>
+			case 'image': // 10.4.4 <draw:image>
+			case 'data-pilot-tables': // 9.6.2 <table:data-pilot-tables>
+			case 'list-style': // 16.30 <text:list-style>
+			case 'form': // 13.13 <form:form>
+			case 'dde-links': // 9.8 <table:dde-links>
+			case 'annotation': // 14.1 <office:annotation>
 				if(Rn[1]==='/'){if((tmp=state.pop())[0]!==Rn[3]) throw "Bad state: "+tmp;}
 				else if(Rn[0].charAt(Rn[0].length-2) !== '/') state.push([Rn[3], false]);
 				break;
@@ -112,7 +134,7 @@ var parse_content_xml = (function() {
 					if((tmp=state.pop())[0]!==Rn[3]) throw "Bad state: "+tmp;
 				} else if(Rn[0].charAt(Rn[0].length-2) !== '/') {
 					NF = "";
-					NFtag = parsexmltag(Rn[0]);
+					NFtag = parsexmltag(Rn[0], false);
 					state.push([Rn[3], true]);
 				} break;
 
@@ -120,6 +142,7 @@ var parse_content_xml = (function() {
 			case 'automatic-styles': break; // 3.15.3 <office:automatic-styles>
 
 			case 'style': break; // 16.2 <style:style>
+			case 'map': break; // 16.3 <style:map>
 			case 'font-face': break; // 16.21 <style:font-face>
 
 			case 'paragraph-properties': break; // 17.6 <style:paragraph-properties>
@@ -132,9 +155,11 @@ var parse_content_xml = (function() {
 				switch(state[state.length-1][0]) {
 					case 'time-style':
 					case 'date-style':
-						tag = parsexmltag(Rn[0]);
+						tag = parsexmltag(Rn[0], false);
 						NF += number_formats[Rn[3]][tag.style==='long'?1:0]; break;
 				} break;
+
+			case 'fraction': break; // TODO 16.27.6 <number:fraction>
 
 			case 'day': // 16.27.11 <number:day>
 			case 'month': // 16.27.12 <number:month>
@@ -150,7 +175,7 @@ var parse_content_xml = (function() {
 				switch(state[state.length-1][0]) {
 					case 'time-style':
 					case 'date-style':
-						tag = parsexmltag(Rn[0]);
+						tag = parsexmltag(Rn[0], false);
 						NF += number_formats[Rn[3]][tag.style==='long'?1:0]; break;
 				} break;
 
@@ -176,30 +201,114 @@ var parse_content_xml = (function() {
 			case 'forms': break; // 12.25.2 13.2
 			case 'table-column': break; // 9.1.6 <table:table-column>
 
-			case 'graphic-properties': break;
+			case 'null-date': break; // 9.4.2 <table:null-date> TODO: date1904
+
+			case 'graphic-properties': break; // 17.21 <style:graphic-properties>
 			case 'calculation-settings': break; // 9.4.1 <table:calculation-settings>
 			case 'named-expressions': break; // 9.4.11 <table:named-expressions>
-			case 'named-range': break; // 9.4.11 <table:named-range>
+			case 'named-range': break; // 9.4.12 <table:named-range>
+			case 'named-expression': break; // 9.4.13 <table:named-expression>
+			case 'sort': break; // 9.4.19 <table:sort>
+			case 'sort-by': break; // 9.4.20 <table:sort-by>
+			case 'sort-groups': break; // 9.4.22 <table:sort-groups>
+
 			case 'span': break; // <text:span>
+			case 'line-break': break; // 6.1.5 <text:line-break>
 			case 'p':
 				if(Rn[1]==='/') textp = parse_text_p(str.slice(textpidx,Rn.index), textptag);
-				else { textptag = parsexmltag(Rn[0]); textpidx = Rn.index + Rn[0].length; }
+				else { textptag = parsexmltag(Rn[0], false); textpidx = Rn.index + Rn[0].length; }
 				break; // <text:p>
 			case 's': break; // <text:s>
 			case 'date': break; // <*:date>
-			case 'annotation': break;
 
 			case 'object': break; // 10.4.6.2 <draw:object>
 			case 'title': break; // <*:title>
 			case 'desc': break; // <*:desc>
 
+			case 'table-source': break; // 9.2.6
+
+			case 'iteration': break; // 9.4.3 <table:iteration>
+			case 'content-validations': break; // 9.4.4 <table:
+			case 'content-validation': break; // 9.4.5 <table:
+			case 'error-message': break; // 9.4.7 <table:
 			case 'database-ranges': break; // 9.4.14 <table:database-ranges>
 			case 'database-range': break; // 9.4.15 <table:database-range>
 			case 'filter': break; // 9.5.2 <table:filter>
 			case 'filter-and': break; // 9.5.3 <table:filter-and>
 			case 'filter-or': break; // 9.5.4 <table:filter-or>
 			case 'filter-condition': break; // 9.5.5 <table:filter-condition>
-			default: if(opts.WTF) throw Rn;
+
+			case 'list-level-style-bullet': break; // 16.31 <text:
+			case 'list-level-style-number': break; // 16.32 <text:
+			case 'list-level-properties': break; // 17.19 <style:
+
+			/* 7.3 Document Fields */
+			case 'sender-firstname': // 7.3.6.2
+			case 'sender-lastname': // 7.3.6.3
+			case 'sender-initials': // 7.3.6.4
+			case 'sender-title': // 7.3.6.5
+			case 'sender-position': // 7.3.6.6
+			case 'sender-email': // 7.3.6.7
+			case 'sender-phone-private': // 7.3.6.8
+			case 'sender-fax': // 7.3.6.9
+			case 'sender-company': // 7.3.6.10
+			case 'sender-phone-work': // 7.3.6.11
+			case 'sender-street': // 7.3.6.12
+			case 'sender-city': // 7.3.6.13
+			case 'sender-postal-code': // 7.3.6.14
+			case 'sender-country': // 7.3.6.15
+			case 'sender-state-or-province': // 7.3.6.16
+			case 'author-name': // 7.3.7.1
+			case 'author-initials': // 7.3.7.2
+			case 'chapter': // 7.3.8
+			case 'file-name': // 7.3.9
+			case 'template-name': // 7.3.9
+			case 'sheet-name': // 7.3.9
+				break;
+
+			/* 9.6 Data Pilot Tables <table: */
+			case 'data-pilot-table': // 9.6.3
+			case 'source-cell-range': // 9.6.5
+			case 'source-service': // 9.6.6
+			case 'data-pilot-field': // 9.6.7
+			case 'data-pilot-level': // 9.6.8
+			case 'data-pilot-subtotals': // 9.6.9
+			case 'data-pilot-subtotal': // 9.6.10
+			case 'data-pilot-members': // 9.6.11
+			case 'data-pilot-member': // 9.6.12
+			case 'data-pilot-display-info': // 9.6.13
+			case 'data-pilot-sort-info': // 9.6.14
+			case 'data-pilot-layout-info': // 9.6.15
+			case 'data-pilot-field-reference': // 9.6.16
+			case 'data-pilot-groups': // 9.6.17
+			case 'data-pilot-group': // 9.6.18
+			case 'data-pilot-group-member': // 9.6.19
+				break;
+
+			/* 10.3 Drawing Shapes */
+			case 'rect': // 10.3.2
+				break;
+
+			/* 14.6 DDE Connections */
+			case 'dde-connection-decls': // 14.6.2 <text:
+			case 'dde-connection-decl': // 14.6.3 <text:
+			case 'dde-link': // 14.6.4 <table:
+			case 'dde-source': // 14.6.5 <office:
+				break;
+
+			case 'properties': break; // 13.7 <form:properties>
+			case 'property': break; // 13.8 <form:property>
+
+			case 'a': break; // 6.1.8 hyperlink
+
+			/* non-standard */
+			case 'table-protection': break;
+			case 'data-pilot-grand-total': break; // <table:
+			default:
+				if(Rn[2] === 'dc:') break; // TODO: properties
+				if(Rn[2] === 'draw:') break; // TODO: drawing
+				if(Rn[2] === 'calcext:') break; // ignore undocumented extensions
+				if(opts.WTF) throw Rn;
 		}
 		var out = {
 			Sheets: Sheets,

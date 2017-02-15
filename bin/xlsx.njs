@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-/* xlsx.js (C) 2013-2015 SheetJS -- http://sheetjs.com */
+/* xlsx.js (C) 2013-present  SheetJS -- http://sheetjs.com */
 var n = "xlsx";
 /* vim: set ts=2 ft=javascript: */
 var X = require('../');
+require('exit-on-epipe');
 var fs = require('fs'), program = require('commander');
 program
 	.version(X.version)
@@ -15,13 +16,16 @@ program
 	.option('-B, --xlsb', 'emit XLSB to <sheetname> or <file>.xlsb')
 	.option('-M, --xlsm', 'emit XLSM to <sheetname> or <file>.xlsm')
 	.option('-X, --xlsx', 'emit XLSX to <sheetname> or <file>.xlsx')
+	.option('-Y, --ods',  'emit ODS  to <sheetname> or <file>.ods')
+	.option('-2, --biff2','emit XLS  to <sheetname> or <file>.xls (BIFF2)')
 	.option('-S, --formulae', 'print formulae')
 	.option('-j, --json', 'emit formatted JSON (all fields text)')
 	.option('-J, --raw-js', 'emit raw JS object (raw numbers)')
 	.option('-F, --field-sep <sep>', 'CSV field separator', ",")
 	.option('-R, --row-sep <sep>', 'CSV row separator', "\n")
 	.option('-n, --sheet-rows <num>', 'Number of rows to process (0=all rows)')
-	.option('--sst', 'generate sst')
+	.option('--sst', 'generate shared string table for XLS* formats')
+	.option('--compress', 'use compression when writing XLSX/M/B and ODS')
 	.option('--perf', 'do not generate output')
 	.option('--all', 'parse everything; XLS[XMB] write as much as possible')
 	.option('--dev', 'development mode')
@@ -47,7 +51,7 @@ if(process.version === 'v0.10.31') {
 	process.exit(1);
 }
 
-var filename, sheetname = '';
+var filename/*:?string*/, sheetname = '';
 if(program.args[0]) {
 	filename = program.args[0];
 	if(program.args[1]) sheetname = program.args[1];
@@ -59,13 +63,13 @@ if(!filename) {
 	console.error(n + ": must specify a filename");
 	process.exit(1);
 }
-
+/*:: if(filename) { */
 if(!fs.existsSync(filename)) {
 	console.error(n + ": " + filename + ": No such file or directory");
 	process.exit(2);
 }
 
-var opts = {}, wb;
+var opts = {}, wb/*:?Workbook*/;
 if(program.listSheets) opts.bookSheets = true;
 if(program.sheetRows) opts.sheetRows = program.sheetRows;
 if(program.password) opts.password = program.password;
@@ -97,16 +101,20 @@ else try {
 }
 if(program.read) process.exit(0);
 
+/*::   if(wb) { */
 if(program.listSheets) {
 	console.log(wb.SheetNames.join("\n"));
 	process.exit(0);
 }
 
-var wopts = {WTF:opts.WTF, bookSST:program.sst};
+var wopts = ({WTF:opts.WTF, bookSST:program.sst}/*:any*/);
+if(program.compress) wopts.compression = true;
 
-if(program.xlsx) return X.writeFile(wb, sheetname || (filename + ".xlsx"), wopts);
-if(program.xlsm) return X.writeFile(wb, sheetname || (filename + ".xlsm"), wopts);
-if(program.xlsb) return X.writeFile(wb, sheetname || (filename + ".xlsb"), wopts);
+/* full workbook formats */
+['xlsx', 'xlsm', 'xlsb', 'ods'].forEach(function(m) { if(program[m]) {
+		X.writeFile(wb, sheetname || ((filename || "") + "." + m), wopts);
+		process.exit(0);
+} });
 
 var target_sheet = sheetname || '';
 if(target_sheet === '') target_sheet = wb.SheetNames[0];
@@ -120,7 +128,14 @@ try {
 	process.exit(4);
 }
 
-if(program.perf) return;
+if(program.perf) process.exit(0);
+
+/* single worksheet XLS formats */
+['biff2'].forEach(function(m) { if(program[m]) {
+		wopts.bookType = m;
+		X.writeFile(wb, sheetname || ((filename || "") + ".xls"), wopts);
+		process.exit(0);
+} });
 
 var oo = "";
 if(!program.quiet) console.error(target_sheet);
@@ -131,3 +146,5 @@ else oo = X.utils.make_csv(ws, {FS:program.fieldSep, RS:program.rowSep});
 
 if(program.output) fs.writeFileSync(program.output, oo);
 else console.log(oo);
+/*::   } */
+/*:: } */

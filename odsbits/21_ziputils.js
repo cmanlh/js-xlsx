@@ -20,18 +20,18 @@ function getzipfile(zip, file) {
 	return o;
 }
 
-function getzipdata(zip, file, safe) {
+function getzipdata(zip, file, safe/*:?boolean*/) {
 	if(!safe) return getdata(getzipfile(zip, file));
 	if(!file) return null;
 	try { return getzipdata(zip, file); } catch(e) { return null; }
 }
 
 var _fs, jszip;
+/*:: declare var JSZip:any; */
 if(typeof JSZip !== 'undefined') jszip = JSZip;
 if (typeof exports !== 'undefined') {
 	if (typeof module !== 'undefined' && module.exports) {
-		if(has_buf && typeof jszip === 'undefined') jszip = require('js'+'zip');
-		if(typeof jszip === 'undefined') jszip = require('./js'+'zip').JSZip;
+		if(typeof jszip === 'undefined') jszip = require('./js'+'zip');
 		_fs = require('f'+'s');
 	}
 }
